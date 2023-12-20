@@ -1,0 +1,32 @@
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: "/etc/kubernetes/scheduler.conf"
+leaderElection:
+  leaderElect: false
+#plugins:
+#  - preFilter:
+#      enabled:
+#        - name: NodePorts
+#        - name: NodeResourcesFit
+#        - name: VolumeBinding
+#        - name: NodeName
+#  - filter:
+#      enabled:
+#        - name: NodeAffinity
+#  - score:
+#      enabled:
+#        - name: NodeResourcesBalancedAllocation
+extenders:
+  - urlPrefix: "http://gpu-admission.kube-system:3456/scheduler"
+    filterVerb: filter
+    bindVerb: bind
+    enableHTTPS: false
+    nodeCacheCapable: true
+    weight: 1
+    httpTimeout: 30s
+    managedResources:
+      - name: "nvidia.com/vcuda-core"
+        ignoredByScheduler: true
+      - name: "nvidia.com/vcuda-memory"
+        ignoredByScheduler: true

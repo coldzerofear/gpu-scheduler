@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-scheduler-config
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/component: gpu-scheduler
+data:
+  config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: true
+      resourceName: gpu-scheduler
+      resourceNamespace: kube-system
+    profiles:
+    - schedulerName: gpu-scheduler
+    extenders:
+      - urlPrefix: "http://127.0.0.1:3456/scheduler"
+        filterVerb: filter
+        bindVerb: bind
+        enableHTTPS: false
+        nodeCacheCapable: true
+        weight: 1
+        httpTimeout: 30s
+        managedResources:
+          - name: "nvidia.com/vcuda-core"
+            ignoredByScheduler: true
+          - name: "nvidia.com/vcuda-memory"
+            ignoredByScheduler: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/component: gpu-scheduler
+  name: gpu-scheduler:leader-election-role
+  namespace: kube-system
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/component: gpu-scheduler
+  name: gpu-scheduler:node-role
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/status
+    verbs:
+      - patch
+      - update
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-scheduler-as-kube-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: gpu-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:kube-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-scheduler-as-volume-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: gpu-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:volume-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-scheduler-as-daemon-set-controller
+subjects:
+  - kind: ServiceAccount
+    name: gpu-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:controller:daemon-set-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-scheduler-as-node-role
+subjects:
+  - kind: ServiceAccount
+    name: gpu-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: gpu-scheduler:node-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-scheduler-as-leader-election-role
+  namespace: kube-system
+subjects:
+  - kind: ServiceAccount
+    name: gpu-scheduler
+    namespace: kube-system
+roleRef:
+  kind: Role
+  name: gpu-scheduler:leader-election-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-scheduler
+  namespace: kube-system
+spec:
+  ports:
+    - port: 3456
+      protocol: TCP
+      targetPort: 3456
+  selector:
+    component: scheduler
+    tier: control-plane
+    app: gpu-scheduler
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    component: scheduler
+    tier: control-plane
+    app: gpu-scheduler
+  name: gpu-scheduler
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: gpu-scheduler
+      component: scheduler
+      tier: control-plane
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: gpu-scheduler
+        component: scheduler
+        tier: control-plane
+        version: second
+    spec:
+      serviceAccountName: gpu-scheduler
+      priorityClassName: system-node-critical
+      containers:
+        - image: registry.cn-hangzhou.aliyuncs.com/google_containers/kube-scheduler:v1.27.4
+          imagePullPolicy: IfNotPresent
+          name: gpu-scheduler
+          command:
+            - kube-scheduler
+            - --config=/config/config.yaml
+            - -v=4
+          resources:
+            requests:
+              cpu: 100m
+          volumeMounts:
+            - name: scheduler-config
+              mountPath: /config
+        - image: registry.tydic.com/dcloud/gpu-admission:latest
+          name: gpu-scheduler-extender
+          env:
+            - name: LOG_LEVEL
+              value: "4"
+            - name: EXTRA_FLAGS
+              # 根据KubeSchedulerConfiguration配置文件定义是否开启节点缓存
+              value: "--nodeCacheCapable=true"
+          ports:
+            - containerPort: 3456
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+#          livenessProbe:
+#            failureThreshold: 8
+#            httpGet:
+#              host: 127.0.0.1
+#              path: /version
+#              port: 3456
+#              scheme: HTTP
+#            initialDelaySeconds: 10
+#            periodSeconds: 10
+#            timeoutSeconds: 15
+      volumes:
+        - name: scheduler-config
+          configMap:
+            name: gpu-scheduler-config

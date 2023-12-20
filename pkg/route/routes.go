@@ -36,7 +36,8 @@ const (
 	versionPath = "/version"
 	apiPrefix   = "/scheduler"
 	// predication router path
-	predicatesPrefix = apiPrefix + "/predicates"
+	filterPerfix = apiPrefix + "/filter"
+	bindPerfix   = apiPrefix + "/bind"
 )
 
 func checkBody(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func checkBody(w http.ResponseWriter, r *http.Request) {
 }
 
 // PredicateRoute sets router table for predication
-func PredicateRoute(predicate predicate.Predicate) httprouter.Handle {
+func FilterPredicateRoute(predicate predicate.FilterPredicate, nodeCacheCapable bool) httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		checkBody(w, r)
 
@@ -58,13 +59,20 @@ func PredicateRoute(predicate predicate.Predicate) httprouter.Handle {
 		var extenderFilterResult *extenderv1.ExtenderFilterResult
 
 		if err := json.NewDecoder(body).Decode(&extenderArgs); err != nil {
+			klog.Errorf("Decode extender filter args err, %v", err)
 			extenderFilterResult = &extenderv1.ExtenderFilterResult{
 				Nodes:       nil,
 				FailedNodes: nil,
 				Error:       err.Error(),
 			}
 		} else {
-			extenderFilterResult = predicate.Filter(extenderArgs)
+			if nodeCacheCapable {
+				extenderFilterResult = predicate.FilterOnCache(extenderArgs)
+				klog.V(2).Info("nodeCacheCapable enable")
+			} else {
+				extenderFilterResult = predicate.Filter(extenderArgs)
+				klog.V(2).Info("nodeCacheCapable disable")
+			}
 			klog.V(4).Infof("%s: ExtenderArgs = %+v", predicate.Name(), extenderArgs)
 		}
 
@@ -102,7 +110,49 @@ func DebugLogging(h httprouter.Handle, path string) httprouter.Handle {
 	}
 }
 
-func AddPredicate(router *httprouter.Router, predicate predicate.Predicate) {
-	path := predicatesPrefix
-	router.POST(path, DebugLogging(PredicateRoute(predicate), path))
+func AddFilterPredicate(router *httprouter.Router, predicate predicate.FilterPredicate, nodeCacheCapable bool) {
+	path := filterPerfix
+	router.POST(path, DebugLogging(FilterPredicateRoute(predicate, nodeCacheCapable), path))
+}
+
+func AddBindPredicate(router *httprouter.Router, predicate predicate.BindPredicate) {
+	path := bindPerfix
+	router.POST(path, DebugLogging(BindPredicateRoute(predicate), path))
+}
+
+func BindPredicateRoute(predicate predicate.BindPredicate) httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+		checkBody(w, r)
+
+		var buf bytes.Buffer
+		body := io.TeeReader(r.Body, &buf)
+
+		var extenderBindingArgs extenderv1.ExtenderBindingArgs
+		var extenderBindingResult *extenderv1.ExtenderBindingResult
+
+		if err := json.NewDecoder(body).Decode(&extenderBindingArgs); err != nil {
+			klog.Errorf("Decode extender binding args err, %v", err)
+			extenderBindingResult = &extenderv1.ExtenderBindingResult{
+				Error: err.Error(),
+			}
+		} else {
+			extenderBindingResult = predicate.Bind(extenderBindingArgs)
+			klog.V(4).Infof("%s: ExtenderBindingArgs = %+v", predicate.Name(), extenderBindingArgs)
+		}
+
+		if resultBody, err := json.Marshal(extenderBindingResult); err != nil {
+			klog.Errorf("Failed to marshal extenderBindingResult: %+v, %+v",
+				err, extenderBindingResult)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			errMsg := fmt.Sprintf("{'error':'%s'}", err.Error())
+			w.Write([]byte(errMsg))
+		} else {
+			klog.V(4).Infof("%s: extenderBindingResult = %s",
+				predicate.Name(), string(resultBody))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(resultBody)
+		}
+	}
 }

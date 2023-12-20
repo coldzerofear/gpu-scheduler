@@ -1,5 +1,4 @@
-#FROM centos:7 as build
-FROM nvidia/cuda:11.2.2-devel-centos7 as build
+FROM nvidia/cuda:11.2.2-devel-ubi8 as build
 
 ARG version
 ARG commit
@@ -7,7 +6,7 @@ ARG commit
 RUN yum install -y rpm-build make
 
 ENV GOLANG_VERSION 1.20.9
-RUN curl -sSL https://golang.google.cn/dl/go${GOLANG_VERSION}.linux-amd64.tar.gz \
+RUN curl -sSL https://golang.google.cn/dl/go${GOLANG_VERSION}.linux-arm64.tar.gz \
     | tar -C /usr/local -xz
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
@@ -27,16 +26,17 @@ RUN rpmbuild -ba --quiet \
   --define 'version '${version}'' \
   --define 'commit '${commit}'' \
   gpu-admission.spec
-
+RUN ls /root/rpmbuild/RPMS
+RUN ls /root/rpmbuild/RPMS/aarch64
 
 FROM centos:7
 
 ARG version
 ARG commit
 
-COPY --from=build /root/rpmbuild/RPMS/x86_64/gpu-admission-${version}-${commit}.el7.x86_64.rpm /tmp
+COPY --from=build /root/rpmbuild/RPMS/aarch64/gpu-admission-${version}-${commit}.el8.aarch64.rpm /tmp
 
-RUN rpm -ivh /tmp/gpu-admission-${version}-${commit}.el7.x86_64.rpm
+RUN rpm -ivh /tmp/gpu-admission-${version}-${commit}.el8.aarch64.rpm
 
 EXPOSE 3456
 

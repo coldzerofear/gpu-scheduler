@@ -37,50 +37,68 @@ import (
 )
 
 var (
-	kubeconfig     string
-	masterURL      string
-	listenAddress  string
-	profileAddress string
+	kubeconfig              string
+	masterURL               string
+	listenAddress           string
+	profileAddress          string
+	nodeCacheCapable        bool
+	enableComputeCapability bool
 )
 
 func main() {
+	klog.InitFlags(nil)
+	// 加载命令行参数默认值
 	addFlags(pflag.CommandLine)
-
+	//Parse解析参数列表中的标志定义，其中不应包含命令名。 必须在定义FlagSet中的所有标志之后以及程序访问标志之前调用。如果设置了-help或-h但未定义，则返回值将为ErrHelp。
+	flag.CommandLine.Parse([]string{})
+	// 初始化日志参数
+	initFlags()
 	logs.InitLogs()
 	defer logs.FlushLogs()
-	initFlags()
-	flag.CommandLine.Parse([]string{})
 	verflag.PrintAndExitIfRequested()
 
+	// 创建http路由
 	router := httprouter.New()
+	// 添加获取当前 版本接口
 	route.AddVersion(router)
 
 	var (
 		clientCfg *rest.Config
 		err       error
 	)
-
+	// 获取配置k8s客户端配置文件
 	clientCfg, err = clientcmd.BuildConfigFromFlags(masterURL, kubeconfig)
 	if err != nil {
 		klog.Fatalf("Error building kubeconfig: %s", err.Error())
 	}
-
+	// 创建k8s客户端
 	kubeClient, err := kubernetes.NewForConfig(clientCfg)
 	if err != nil {
 		klog.Fatalf("Error building kubernetes clientset: %s", err.Error())
 	}
 
+	//quit := make(chan struct{})
+	//defer close(quit)
+	//gpuFilter1, err := predicate.NewGPUFilter1(kubeClient, quit)
+
+	// 创建gpu 过滤接口，并将其加入http路由
 	gpuFilter, err := predicate.NewGPUFilter(kubeClient)
 	if err != nil {
 		klog.Fatalf("Failed to new gpu quota filter: %s", err.Error())
 	}
-	route.AddPredicate(router, gpuFilter)
+	// 添加filter接口
+	route.AddFilterPredicate(router, gpuFilter, nodeCacheCapable)
+
+	nodeBinding, _ := predicate.NewNodeBinding(kubeClient)
+	// 添加bind接口
+	route.AddBindPredicate(router, nodeBinding)
 
 	go func() {
 		log.Println(http.ListenAndServe(profileAddress, nil))
 	}()
 
 	klog.Infof("Server starting on %s", listenAddress)
+	// 创建服务器并监听请求
 	if err := http.ListenAndServe(listenAddress, router); err != nil {
 		log.Fatal(err)
 	}
@@ -93,6 +111,9 @@ func addFlags(fs *pflag.FlagSet) {
 		"The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
 	fs.StringVar(&listenAddress, "address", "127.0.0.1:3456", "The address it will listen")
 	fs.StringVar(&profileAddress, "pprofAddress", "127.0.0.1:3457", "The address for debug")
+	fs.BoolVar(&nodeCacheCapable, "nodeCacheCapable", false, "The nodeCacheCapable enable node caching")
+	fs.BoolVar(&enableComputeCapability, "enableComputeCapability", false, "Based on node device computing power scheduling: "+
+		"Once the scheduler is turned on, it will try its best to schedule to node devices with high computing power levels")
 }
 
 func wordSepNormalizeFunc(f *pflag.FlagSet, name string) pflag.NormalizedName {

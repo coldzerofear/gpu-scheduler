@@ -182,7 +182,7 @@ func TestDeviceFilter(t *testing.T) {
 		pod, _ = k8sClient.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
 
 		// wait for podLister to sync
-		time.Sleep(time.Second * 2)
+		// time.Sleep(time.Second * 2)
 
 		nodes, failedNodes, err := gpuFilter.deviceFilter(pod, nodeList)
 		if err != nil {
@@ -205,4 +205,64 @@ func TestDeviceFilter(t *testing.T) {
 		pod, _ = k8sClient.CoreV1().Pods("test-ns").Update(context.Background(), pod, metav1.UpdateOptions{})
 	}
 
+}
+
+func TestMatchGpuType(t *testing.T) {
+	gpuFilter, _ := NewFakeGPUFilter()
+
+	pod := corev1.Pod{}
+	pod.Annotations = make(map[string]string)
+	pod.Annotations[util.PodAnnotationUseGpuType] = "a100,4090"
+	pod.Annotations[util.PodAnnotationUnUseGpuType] = "h100"
+	nodes := make([]corev1.Node, 0)
+	nodes = append(nodes, corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s01",
+			Namespace: "default",
+			Labels: map[string]string{
+				util.GPUModelLabel: "A100,4090,H100",
+			},
+		},
+	})
+	nodes = append(nodes, corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s02",
+			Namespace: "default",
+			Labels: map[string]string{
+				util.GPUModelLabel: "H100",
+			},
+		},
+	})
+	nodes = append(nodes, corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s03",
+			Namespace: "default",
+			Labels: map[string]string{
+				util.GPUModelLabel: "h100,3090",
+			},
+		},
+	})
+	nodes = append(nodes, corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s04",
+			Namespace: "default",
+			Labels: map[string]string{
+				util.GPUModelLabel: "h100,4090",
+			},
+		},
+	})
+
+	filter, nodesMap, err := gpuFilter.labelsFilter(&pod, nodes)
+	if err != nil {
+		fmt.Errorf("err: %v", err)
+		return
+	}
+	fmt.Println("通过的node:")
+	for _, node := range filter {
+		fmt.Println("nodeName:", node.Name)
+	}
+	fmt.Println("未通过的node:")
+	for key, val := range nodesMap {
+		fmt.Println("nodeName:", key, "Reason:", val)
+	}
 }

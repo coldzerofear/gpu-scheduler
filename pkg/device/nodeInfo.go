@@ -28,53 +28,82 @@ import (
 type NodeInfo struct {
 	name        string
 	node        *v1.Node
-	devs        map[int]*DeviceInfo
-	deviceCount int
-	totalMemory uint
-	usedCore    uint
-	usedMemory  uint
+	devs        map[int]*DeviceInfo // gpu设备信息
+	deviceCount int                 // 可用设备数
+	totalMemory uint                // 总可用内存
+	usedCore    uint                // 已使用核心
+	usedMemory  uint                // 已使用内存
+	// 新增节点最大算力等级单位
+	maxCapability int
 }
 
-func NewNodeInfo(node *v1.Node, pods []*v1.Pod) *NodeInfo {
+func NewNodeInfo(node *v1.Node, pods []*v1.Pod) (*NodeInfo, error) {
 	klog.V(4).Infof("debug: NewNodeInfo() creates nodeInfo for %s", node.Name)
-
-	devMap := map[int]*DeviceInfo{}
+	//devMap := map[int]*DeviceInfo{}
+	// 当前节点的总显存容量
 	nodeTotalMemory := uint(util.GetCapacityOfNode(node, util.VMemoryAnnotation))
-	deviceCount := util.GetGPUDeviceCountOfNode(node)
-	deviceTotalMemory := nodeTotalMemory / uint(deviceCount)
-	for i := 0; i < deviceCount; i++ {
-		devMap[i] = newDeviceInfo(i, deviceTotalMemory)
+	//// 当前节点上的gpu总数
+	//deviceCount := util.GetGPUDeviceCountOfNode(node)
+	//
+	//// 显存总量 / gpu数量 得到 单个gpu的显存总量
+	//// TODO 这里默认按照 设备数 平均 每个设备的内存，没有考虑节点是否存在设备混用情况，需要改造
+	//deviceTotalMemory := nodeTotalMemory / uint(deviceCount)
+	//for i := 0; i < deviceCount; i++ {
+	//	devMap[i] = newDeviceInfo(i, deviceTotalMemory)
+	//}
+
+	devMap, err := newDeviceInfoMapByNode(node)
+	if err != nil {
+		return nil, err
+	}
+	deviceCount := len(devMap)
+
+	maxCapability := 0
+	for _, info := range devMap {
+		maxCapability = util.Max(maxCapability, info.capability)
 	}
 
+	// 当前节点的gpu设备信息
 	ret := &NodeInfo{
-		name:        node.Name,
-		node:        node,
-		devs:        devMap,
-		deviceCount: deviceCount,
-		totalMemory: nodeTotalMemory,
+		name:          node.Name,
+		node:          node,
+		devs:          devMap,
+		deviceCount:   deviceCount,
+		totalMemory:   nodeTotalMemory,
+		maxCapability: maxCapability,
 	}
 
+	// 根据pod的注释，构建节点分配状态
 	// According to the pods' annotations, construct the node allocation
 	// state
 	for _, pod := range pods {
+		// 遍历pod的所有容器
 		for i, c := range pod.Spec.Containers {
+			// 根据容器的索引得到分配给该容器的 gpu设备索引
 			predicateIndexes, err := util.GetPredicateIdxOfContainer(pod, i)
 			if err != nil {
 				continue
 			}
+			// 遍历gpu设备索引
 			for _, index := range predicateIndexes {
 				var vcore, vmemory uint
+				// 当索引号 大于等于 节点上的gpu总设备数则跳过
 				if index >= deviceCount {
 					klog.Infof("invalid predicateIndex %d larger than device count", index)
 					continue
 				}
+				// 获取容器请求的cuda核数
 				vcore = util.GetGPUResourceOfContainer(&c, util.VCoreAnnotation)
 				if vcore < util.HundredCore {
+					// 当 请求的cuda核数小于1张完整的卡，则 获取请求的 显存大小
 					vmemory = util.GetGPUResourceOfContainer(&c, util.VMemoryAnnotation)
 				} else {
+					// 当请求的cuda核数为完整的1张或多张卡，则完整分配gpu所有的显存
 					vcore = util.HundredCore
-					vmemory = deviceTotalMemory
+					//vmemory = deviceTotalMemory
+					vmemory = devMap[index].totalMemory
 				}
+				// 记录使用的GPU内核和显存
 				err = ret.AddUsedResources(index, vcore, vmemory)
 				if err != nil {
 					klog.Infof("failed to update used resource for node %s dev %d due to %v",
@@ -85,7 +114,7 @@ func NewNodeInfo(node *v1.Node, pods []*v1.Pod) *NodeInfo {
 		}
 	}
 
-	return ret
+	return ret, nil
 }
 
 // AddUsedResources records the used GPU core and memory
@@ -113,6 +142,11 @@ func (n *NodeInfo) GetDeviceMap() map[int]*DeviceInfo {
 // GetNode returns the original node structure of kubernetes
 func (n *NodeInfo) GetNode() *v1.Node {
 	return n.node
+}
+
+// GetMaxCapability returns the maxCapability of GPU devices
+func (n *NodeInfo) GetMaxCapability() int {
+	return n.maxCapability
 }
 
 // GetName returns node name

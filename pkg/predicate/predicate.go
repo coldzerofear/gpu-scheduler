@@ -20,10 +20,19 @@ import (
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 )
 
-type Predicate interface {
+type FilterPredicate interface {
 	// Name returns the name of this predictor
 	Name() string
 	// Filter returns the filter result of predictor, this will tell the suitable nodes to running
 	// pod
 	Filter(args extenderv1.ExtenderArgs) *extenderv1.ExtenderFilterResult
+	// cache模式
+	FilterOnCache(args extenderv1.ExtenderArgs) *extenderv1.ExtenderFilterResult
+}
+
+type BindPredicate interface {
+	// Name returns the name of this predictor
+	Name() string
+	// Pod绑定节点接口
+	Bind(args extenderv1.ExtenderBindingArgs) *extenderv1.ExtenderBindingResult
 }

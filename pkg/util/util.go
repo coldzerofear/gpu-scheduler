@@ -27,22 +27,92 @@ import (
 )
 
 const (
-	VCoreAnnotation         = "tencent.com/vcuda-core"
-	VMemoryAnnotation       = "tencent.com/vcuda-memory"
-	PredicateTimeAnnotation = "tencent.com/predicate-time"
-	PredicateGPUIndexPrefix = "tencent.com/predicate-gpu-idx-"
-	PredicateNode           = "tencent.com/predicate-node"
-	GPUAssigned             = "tencent.com/gpu-assigned"
-	HundredCore             = 100
+	VCoreAnnotation         = "nvidia.com/vcuda-core"
+	VMemoryAnnotation       = "nvidia.com/vcuda-memory"
+	PredicateTimeAnnotation = "nvidia.com/predicate-time"
+	PredicateGPUIndexPrefix = "nvidia.com/predicate-gpu-idx-"
+	PredicateNode           = "nvidia.com/predicate-node"
+	GPUAssigned             = "nvidia.com/gpu-assigned"
+
+	// TODO 节点gpu manager组件心跳
+	NodeAnnotationHeartbeat = "tydic.io/node-gpu-heartbeat"
+	// Deprecated TODO 检测gpu是否开启mig
+	NodeAnnotationDeviceMig = "tydic.io/mig-device-"
+	// TODO 节点gpu设备信息注册
+	NodeAnnotationDeviceRegister = "tydic.io/nvidia-device-register"
+
+	// TODO 作用于pod上指定要分配的设备类型 例如：A100
+	PodAnnotationUseGpuType = "nvidia.com/use-gputype"
+	// TODO 作用于pod上指定不要分配的设备类型 例如：3080
+	PodAnnotationUnUseGpuType = "nvidia.com/nouse-gputype"
+
+	// 节点绑定时间
+	PodLabelBindTime = "tydic.io/bind-time"
+	// 设备绑定阶段
+	PodLabelDeviceBindPhase = "tydic.io/bind-phase"
+
+	HundredCore = 100
+
+	// TODO 节点设备类型标签
+	GPUModelLabel = "gaia.nvidia.com/gpu-model"
 )
+
+type DeviceBindPhase string
+
+const (
+	DeviceBindAllocating DeviceBindPhase = "allocating"
+	DeviceBindFailed     DeviceBindPhase = "failed"
+	DeviceBindSuccess    DeviceBindPhase = "success"
+)
+
+// TODO 校验设备名称是否符合条件
+func CheckDeviceType(annotations map[string]string, deviceType string) bool {
+	deviceType = strings.ToUpper(deviceType)
+	if use, ok1 := annotations[PodAnnotationUseGpuType]; ok1 {
+		useTypes := strings.Split(use, ",")
+		if !ContainsSliceFunc(useTypes, func(useType string) bool {
+			return strings.Contains(deviceType, strings.ToUpper(useType))
+		}) {
+			return false
+		}
+	}
+	if unuse, ok2 := annotations[PodAnnotationUnUseGpuType]; ok2 {
+		unuseTypes := strings.Split(unuse, ",")
+		if ContainsSliceFunc(unuseTypes, func(unuseType string) bool {
+			return strings.Contains(deviceType, strings.ToUpper(unuseType))
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+func ContainsSliceFunc[S ~[]E, E any](s S, filter func(E) bool) bool {
+	for _, e := range s {
+		if filter(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// Deprecated 已启弃用这种方式
+func IsMig(index int, node *v1.Node) bool {
+	migDeviceKey := fmt.Sprint(NodeAnnotationDeviceMig, index)
+	if val, ok := node.Annotations[migDeviceKey]; ok {
+		return val == "true"
+	}
+	return false
+}
 
 // IsGPURequiredPod tell if the pod is a GPU request pod
 func IsGPURequiredPod(pod *v1.Pod) bool {
 	klog.V(4).Infof("Determine if the pod %s needs GPU resource", pod.Name)
-
+	// 通过pod中容器定义的resourceName，获取该pod请求了多少cuda核心和显存
 	vcore := GetGPUResourceOfPod(pod, VCoreAnnotation)
 	vmemory := GetGPUResourceOfPod(pod, VMemoryAnnotation)
 
+	// 当请求的vcuda 为 0 或者 显存 为0 则 返回 false
 	// Check if pod request for GPU resource
 	if vcore <= 0 || (vcore < HundredCore && vmemory <= 0) {
 		klog.V(4).Infof("Pod %s in namespace %s does not Request for GPU resource",
@@ -68,6 +138,13 @@ func IsGPURequiredContainer(c *v1.Container) bool {
 	}
 
 	return true
+}
+
+func Max(a, b int) int {
+	if a >= b {
+		return a
+	}
+	return b
 }
 
 // GetGPUResourceOfPod returns the limit size of GPU resource of given pod

@@ -17,27 +17,29 @@
 package algorithm
 
 import (
-	"sort"
-
+	"fmt"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/klog"
+	"sort"
 
 	"tkestack.io/gpu-admission/pkg/device"
 	"tkestack.io/gpu-admission/pkg/util"
 )
 
 type exclusiveMode struct {
+	pod  *v1.Pod
 	node *device.NodeInfo
 }
 
-//NewExclusiveMode returns a new exclusiveMode struct.
+// NewExclusiveMode returns a new exclusiveMode struct.
 //
-//Evaluate() of exclusiveMode returns one or more empty devices
-//which fullfil the request.
+// Evaluate() of exclusiveMode returns one or more empty devices
+// which fullfil the request.
 //
-//Exclusive mode means GPU devices are not sharing, only one
-//application can use them.
-func NewExclusiveMode(n *device.NodeInfo) *exclusiveMode {
-	return &exclusiveMode{n}
+// Exclusive mode means GPU devices are not sharing, only one
+// application can use them.
+func NewExclusiveMode(n *device.NodeInfo, pod *v1.Pod) *exclusiveMode {
+	return &exclusiveMode{pod: pod, node: n}
 }
 
 func (al *exclusiveMode) Evaluate(cores uint, _ uint) []*device.DeviceInfo {
@@ -46,8 +48,11 @@ func (al *exclusiveMode) Evaluate(cores uint, _ uint) []*device.DeviceInfo {
 		deviceCount = al.node.GetDeviceCount()
 		tmpStore    = make([]*device.DeviceInfo, deviceCount)
 		sorter      = exclusiveModeSort(
+			// 按可分配核心从小到大排序
 			device.ByAllocatableCores,
+			// 按可分配内存从小到大排序
 			device.ByAllocatableMemory,
+			// 按设备id 从小到大排序
 			device.ByID)
 		num = int(cores / util.HundredCore)
 	)
@@ -57,11 +62,23 @@ func (al *exclusiveMode) Evaluate(cores uint, _ uint) []*device.DeviceInfo {
 	}
 
 	sorter.Sort(tmpStore)
-
 	for _, dev := range tmpStore {
 		if num == 0 {
 			break
 		}
+		// TODO 跳过不健康设备的分配
+		if !dev.IsHealth() {
+			klog.V(2).Infof("current gpu device %d it's unhealthy, skip allocation", dev.GetID())
+			continue
+		}
+		// TODO 添加设备类型指定功能
+		if !util.CheckDeviceType(al.pod.Annotations, dev.GetName()) {
+			klog.V(2).Infof("current gpu device %d name %s non compliant annotation[%s], skip allocation",
+				dev.GetID(), dev.GetName(), fmt.Sprintf("%s or %s", util.PodAnnotationUseGpuType, util.PodAnnotationUnUseGpuType))
+			continue
+		}
+
+		// 设备可分配核心为100,
 		if dev.AllocatableCores() == util.HundredCore {
 			devs = append(devs, dev)
 			num -= 1

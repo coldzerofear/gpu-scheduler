@@ -16,7 +16,7 @@
  */
 package device
 
-//LessFunc represents funcion to compare two DeviceInfo or NodeInfo
+// LessFunc represents funcion to compare two DeviceInfo or NodeInfo
 type LessFunc func(p1, p2 interface{}) bool
 
 var (
@@ -48,6 +48,22 @@ var (
 			n1 := p1.(*NodeInfo)
 			n2 := p2.(*NodeInfo)
 			result = n1.GetAvailableMemory() < n2.GetAvailableMemory()
+		}
+		return result
+	}
+
+	// TODO 基于算力等级排序： 从小到大排序
+	ByComputeCapability = func(p1, p2 interface{}) bool {
+		var result bool
+		switch p1.(type) {
+		case *DeviceInfo:
+			d1 := p1.(*DeviceInfo)
+			d2 := p2.(*DeviceInfo)
+			result = d1.GetComputeCapability() < d2.GetComputeCapability()
+		case *NodeInfo:
+			n1 := p1.(*NodeInfo)
+			n2 := p2.(*NodeInfo)
+			result = n1.GetMaxCapability() < n2.GetMaxCapability()
 		}
 		return result
 	}

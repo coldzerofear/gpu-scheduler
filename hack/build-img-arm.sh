@@ -56,7 +56,7 @@ function api::build::prepare_build() {
   "${TAR}" czf "${LOCAL_OUTPUT_ROOT}/gpu-admission-source.tar.gz" --transform 's,^,/gpu-admission-'$VERSION'/,' $(api::build::source_targets)
 
   cp -R "${ROOT}/build/gpu-admission.spec" "${LOCAL_OUTPUT_ROOT}"
-  cp "${ROOT}/Dockerfile" "${LOCAL_OUTPUT_ROOT}"
+  cp "${ROOT}/Dockerfile.arm64" "${LOCAL_OUTPUT_ROOT}"
 }
 
 function api::build::generate() {
@@ -66,7 +66,7 @@ function api::build::generate() {
     docker build -t $IMAGE \
       --build-arg version=${VERSION} \
       --build-arg commit=${GITCOMMIT} \
-      -f ./Dockerfile --platform=linux/amd64 --progress=plain -o type=docker .
+      -f ./Dockerfile.arm64 --platform=linux/arm64 --progress=plain -o type=docker .
   )
 }
 
