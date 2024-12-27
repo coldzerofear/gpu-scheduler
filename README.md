@@ -1,4 +1,5 @@
 # GPU admission
+Try using [vgpu-manager](https://github.com/coldzerofear/vgpu-manager) to solve the scheduling and allocation problems of VGPU. It will solve some existing problems and add new features that you may be interested in.
 
 It is a [scheduler extender](https://github.com/kubernetes/community/blob/master/contributors/design-proposals/scheduling/scheduler_extender.md) for GPU admission.
 It provides the following features:
